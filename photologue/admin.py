@@ -272,3 +272,14 @@ class WatermarkAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Watermark, WatermarkAdmin)
+
+# Remove djcelery objects from admin
+USE_CELERY = getattr(settings, 'PHOTOLOGUE_USE_CELERY', None)
+if USE_CELERY:
+    from djcelery.admin import TaskState, WorkerState
+    from djcelery.admin import IntervalSchedule, CrontabSchedule, PeriodicTask
+    admin.site.unregister(TaskState)
+    admin.site.unregister(WorkerState)
+    admin.site.unregister(IntervalSchedule)
+    admin.site.unregister(CrontabSchedule)
+    admin.site.unregister(PeriodicTask)

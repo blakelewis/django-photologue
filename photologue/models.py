@@ -43,6 +43,9 @@ SAMPLE_SIZE = getattr(settings, 'PHOTOLOGUE_GALLERY_SAMPLE_SIZE', 5)
 # max_length setting for the ImageModel ImageField
 IMAGE_FIELD_MAX_LENGTH = getattr(settings, 'PHOTOLOGUE_IMAGE_FIELD_MAX_LENGTH', 100)
 
+# Whether to use celery to process the sizes with a background task
+USE_CELERY = getattr(settings, 'PHOTOLOGUE_USE_CELERY', None)
+
 # Path to sample image
 SAMPLE_IMAGE_PATH = getattr(settings, 'PHOTOLOGUE_SAMPLE_IMAGE_PATH', os.path.join(
     os.path.dirname(__file__), 'res', 'sample.jpg'))
@@ -457,7 +460,9 @@ class ImageModel(models.Model):
         cache = PhotoSizeCache()
         for photosize in cache.sizes.values():
             if photosize.pre_cache:
-                self.create_size(photosize)
+                if not USE_CELERY or \
+                   USE_CELERY and photosize != 'admin_thumbnail':
+                    self.create_size(photosize)
 
     def __init__(self, *args, **kwargs):
         super(ImageModel, self).__init__(*args, **kwargs)
@@ -489,7 +494,14 @@ class ImageModel(models.Model):
             except:
                 logger.error('Failed to read EXIF DateTimeOriginal', exc_info=True)
         super(ImageModel, self).save(*args, **kwargs)
-        self.pre_cache()
+        if not USE_CELERY:
+            self.pre_cache()
+        else:
+            if self.pre_cache:
+                # Create admin_thumbnail now, then other sizes in background
+                self.create_size(PhotoSize.objects.get(name='admin_thumbnail'))
+                from photologue import tasks
+                tasks.pre_cache.delay(self.id)
 
     def delete(self):
         assert self._get_pk_val() is not None, \
@@ -647,7 +659,16 @@ class BaseEffect(models.Model):
         for prop in [prop for prop in dir(self) if prop[-8:] == '_related']:
             for obj in getattr(self, prop).all():
                 obj.clear_cache()
-                obj.pre_cache()
+                if not USE_CELERY:
+                    obj.pre_cache()
+                else:
+                    if obj.pre_cache:
+                        # Create admin_thumbnail now, then other sizes 
+                        # in background
+                        obj.create_size(PhotoSize.objects.get(
+                            name='admin_thumbnail'))
+                        from photologue import tasks
+                        tasks.pre_cache.delay(obj.id)
 
     def delete(self):
         try:
